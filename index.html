@@ -1,0 +1,154 @@
+```plaintext
+.gitignore
+data.csv
+.github/workflows/ci.yml
+execute.py
+index.html
+```
+
+```plaintext
+# .gitignore
+result.json
+```
+
+```csv
+# data.csv
+date,region,product,units,price
+2023-09-01,North,Widget,10,2.5
+2023-09-02,North,Gadget,5,3.0
+2023-09-03,South,Widget,8,2.5
+2023-09-04,South,Gadget,4,3.0
+2023-09-05,East,Widget,12,2.5
+2023-09-06,East,Gadget,6,3.0
+2023-09-07,West,Widget,7,2.5
+2023-09-08,West,Gadget,3,3.0
+```
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas==2.3 ruff
+
+    - name: Run ruff
+      run: ruff execute.py
+
+    - name: Run script
+      run: python execute.py > result.json
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
+        publish_branch: gh-pages
+        force_orphan: true
+        exclude_assets: |
+          !index.html
+          !result.json
+```
+
+```python
+# execute.py
+import json
+import pandas as pd
+
+
+def main():
+    # Read the data
+    df = pd.read_csv("data.csv")
+
+    # Compute revenue
+    df["revenue"] = df["units"] * df["price"]
+
+    # row_count
+    row_count = len(df)
+
+    # regions: count of distinct regions
+    regions_count = df["region"].nunique()
+
+    # top_n_products_by_revenue (n=3)
+    n = 3
+    top_products = (
+        df.groupby("product")["revenue"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(n)
+        .reset_index()
+    )
+    top_products_list = [
+        {"product": row["product"], "revenue": float(row["revenue"])}
+        for _, row in top_products.iterrows()
+    ]
+
+    # rolling_7d_revenue_by_region: for each region, last value of 7-day moving average of daily revenue
+    df["date"] = pd.to_datetime(df["date"])  # ensure datetime
+    daily_rev = (
+        df.groupby(["region", "date"])["revenue"]  # corrected column name
+        .sum()
+        .reset_index()
+        .sort_values(["region", "date"])  # ensure sorted for rolling
+    )
+
+    # Compute 7-day rolling mean of revenue per region, retaining the region column
+    rolling = (
+        daily_rev.groupby("region")
+        .apply(lambda g: g.set_index("date")["revenue"].rolling("7D").mean())
+        .reset_index(name="rolling_7d_revenue")
+    )
+
+    last_rolling = (
+        rolling.sort_values(["region", "date"])  # ensure order
+        .groupby("region")
+        .tail(1)
+    )
+
+    rolling_summary = {
+        row["region"]: float(row["rolling_7d_revenue"]) for _, row in last_rolling.iterrows()
+    }
+
+    result = {
+        "row_count": int(row_count),
+        "regions": int(regions_count),
+        "top_n_products_by_revenue": top_products_list,
+        "rolling_7d_revenue_by_region": rolling_summary,
+    }
+
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```html
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Pages Result</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius:
